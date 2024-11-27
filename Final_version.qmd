@@ -1,0 +1,553 @@
+---
+title: "Študenti Českých vysokých škôl"
+subtitle: "Praktikum z pokročilé datové vědy"
+author: "Ondřej Batůšek, Šimon Drgoň, Eva Kajzarová"
+institute: "ÚMS, MU"
+date: last-modified
+date-format: DD.MM.YYYY HH:MM
+
+format: 
+  html:
+    page-layout: full
+    theme: cerulean
+    grid:
+      sidebar-width: 300px
+      body-width: 850px
+      margin-width: 300px
+    embed-resources: true
+    code-link: true
+    code-fold: true
+    code-line-numbers: true
+    code-copy: true
+    highlight-style: github
+    code-block-border-left: true
+    number-sections: false
+    tbl-cap-location: top
+    fig-align: center
+    tbl-align: center
+    toc: true
+    toc-location: left
+    toc-title: Obsah
+lang: sk
+editor: source
+---
+
+
+**Vstupné dáta**\
+V našej úlohe sa venujeme dátam o absolventoch českých vysokých škôl (VŠ) dostupných [tu](https://www.kaggle.com/datasets/jetakow/graduation-from-czech-universities) (dáta pochádzajú od Ministerstva školství, mládeže a tělovýchovy České republiky).
+
+V našich dátach máme celkovo `r nrow(data)` pozorovaní a `r ncol(data)` premenných. V každom riadku je uvedená informácia pre konkrétny študijný program/odbory (názov VŠ, fakulty, názov odboru, rok, od ktorého má program akreditáciu, a tiež počet aktívnych študentov daného odboru v danom roku). Okrem aktívnych študentov máme tiež počet absolventov, študentov, ktorí prerušili štúdium, ukončili štúdium bez úspešnej štátnej skúšky, či z dôvodu ukončenia akreditácie, boli vylúčení z disciplinárnych alebo študijných dôvodov, z dôvodu úmrtia alebo z iných dôvodov (konkrétne názvy viď výpis nižšie). Treba podotknúť, že niektoré stĺpce sú z hľadiska informácie zdvojené, napr. máme údaje o názve VŠ ako v češtine (jeden stĺpec), tak aj v angličtine (iný stĺpec). Podobne je to pri názvoch fakúlt a študijných odborov/programov.
+
+```{r}
+#| label: code_00
+#| eval: true
+#| echo: true
+#| warning: false
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(DT)
+library(knitr)
+
+data <- data_origin <- read.csv("university_data.csv", )
+names(data)
+```
+
+::: {#tbl-uni-01}
+```{r}
+#| echo: false
+cofast <- data %>% 
+  select(college_cs, faculty_cs, study_program_cs) %>% 
+  distinct(college_cs, faculty_cs, study_program_cs)
+
+cofast_porodas <- cofast[cofast$study_program_cs == "B5349 Porodní asistence", ]
+kable(cofast_porodas, row.names = F)
+
+  
+data <- data.frame(college = data$college_cs, 
+                   faculty = data$faculty_cs, 
+                   program = data$study_program_cs,
+                   enrollment = data$year_of_enrollment, 
+                   year = data$year, 
+                   active = data$active,
+                   completed = data$completed, 
+                   interrupted = data$interrupted,
+                   terminated = data$for_study_reasons+data$for_disciplinary_reasons + data$terminated_without_graduation,
+                   other = data$termination_of_accreditation + data$death + data$otherwise)
+```
+Prehľad univerzít a fakúlt, na ktorých je možné študovať predmet B5349 Porodní asistence
+:::
+
+Premenná college_en, rovnako ako premenná college_cs, obsahuje `r length(unique(data$college_cs))` rôznych variantov (VŠ na území ČR, verejné aj súkromné). Ďalej rozlišujeme `r length(unique(data$faculty_cs))` variantov pre premenné faculty_cs a faculty_en a `r length(unique(data$study_program_en))` variantov pre study_program_cs a study_program_en. Okrem konkrétnych študijných programov máme aj celkové informácie pre všetky bakalárske, magisterské, nadväzujúce magisterské a doktorské študijné programy na danej VŠ a danej fakulte zvlášť. Poznamenajme tiež, že kódy študijných programov sa opakujú na rôznych školách, tzn. program (dôležitý najmä kód) B5349 Porodní asistence je možné študovať na `r nrow(cofast_porodas)` univerzitách (pozri tabuľku [-@tbl-uni-01]). Študijné programy uvažujeme za obdobie medzi rokmi `r min(data$enrollment)` a `r max(data$enrollment)`. Všetky dáta sú obsiahnuté tabuľke [-@tbl-uni-02].
+
+::: {#tbl-uni-02}
+```{r}
+#| label: code_01
+#| eval: true
+#| echo: true
+#| warning: false
+
+codes <- c("B0000 bakalářské studijní programy", 
+           "M0000 magisterské studijní programy", 
+           "N0000 navaující magisterské studijní programy", 
+           "P0000 doktorské studijní programy")
+data <- data[data$program %in% codes, ]
+
+data <- data %>% group_by(college, faculty, program, year) %>% 
+          summarise(across(c(active, completed, interrupted, terminated, other), 
+                           ~ sum(.x, na.rm = TRUE)))
+
+datatable(data, options = list(pageLength = 10), caption = "Agregované dáta")
+```
+Naše dáta
+:::
+
+Pre ďalšiu prácu s dátami sme zlúčili niektoré premenné, konkrétne `for_study_reasons`, `for_disciplinary_reasons` a `terminated_without_graduation` sme zlúčili do `terminated` a do premennej `other` sme zlúčili premenné `termination_of_accreditation`, `death` a `otherwise.`
+
+***Exploratórna analýza***\
+V ďalšej časti sme sa zamerali na podrobnejší prieskum našich dát, napr. vývoj počtu bakalárskych/magisterských/doktorských a nadväzujúcich magisterských študentov v celej Českej republike. Ďalej sme sa podrobnejšie zamerali na brnianske VŠ a ich porovnanie vzhľadom na počet študentov v jednotlivých kategóriách a pod.
+
+::: {#fig-splines-01}
+```{r}
+#| label: code_02
+#| eval: true
+#| echo: true
+#| warning: false
+#| layout-ncol: 2
+#| fig-align: "center"
+#| bg_black: false
+pdf.options(encoding = "CP1250")
+
+bachelor_program <- data[data$program == "B0000 bakalářské studijní programy", 4:9]
+bachelor_program <- bachelor_program %>% group_by(year) %>% 
+  summarise(across(c(active, completed, interrupted, terminated, other), 
+                   ~ sum(.x, na.rm = TRUE)))
+bachelor_program <- bachelor_program %>% pivot_longer(cols = -year, names_to = "category", values_to = "value")
+
+ggplot(bachelor_program, aes(x = year, y = value, color = category)) +
+  geom_line(linewidth = 1) + geom_point(size = 2) +
+  labs(
+    title = "Počty bakalárskych študentov v ČR",
+    x = "Rok",
+    y = "Absolutný počet",
+    color = "Študentský status"
+  )
+
+master_program <- data[data$program == "M0000 magisterské studijní programy" | 
+                       data$program == "N0000 navaující magisterské studijní programy", 4:9]
+master_program <- master_program %>% group_by(year) %>% 
+  summarise(across(c(active, completed, interrupted, terminated, other), 
+                   ~ sum(.x, na.rm = TRUE)))
+master_program <- master_program %>% pivot_longer(cols = -year, names_to = "category", values_to = "value")
+
+ggplot(master_program, aes(x = year, y = value, color = category)) +
+  geom_line(linewidth = 1) + geom_point(size = 2) +
+  labs(
+    title = "Počty magisterských študentov v ČR",
+    x = "Rok",
+    y = "Absolutný počet",
+    color = "Študentský status"
+  )
+```
+Počty bakalárskych a magisterských študentov v ČR
+:::
+
+
+::: {#fig-splines-02}
+```{r}
+#| label: code_03
+#| eval: true
+#| echo: true
+#| warning: false
+#| layout-ncol: 1
+#| fig-width: 15
+#| fig-height: 7
+#| fig-align: "center"
+#| bg_black: false
+#| 
+pdf.options(encoding = "CP1250")
+
+ddata <- data_origin
+
+ddata <- ddata %>% 
+  select(-c(college_en, faculty_en, study_program_en, year_of_enrollment)) %>% 
+  mutate(terminated = terminated_without_graduation + for_study_reasons + 
+           for_disciplinary_reasons,
+         other = termination_of_accreditation + otherwise + death
+  ) %>% 
+  select(-c(terminated_without_graduation, for_study_reasons, for_disciplinary_reasons,
+            termination_of_accreditation, otherwise, death))
+
+skoly_brno <- c("14000 Masarykova univerzita",
+                "16000 Veterinární univerzita Brno",
+                "26000 Vysoké učení technické v Brně",
+                "43000 Mendelova univerzita"
+)
+
+ddata_new <- ddata[ddata$study_program_cs %in% c(
+  "B0000 bakalářské studijní programy", "N0000 navaující magisterské studijní programy",
+  "P0000 doktorské studijní programy", "M0000 magisterské studijní programy")
+  & ddata$college_cs %in% skoly_brno, ]
+
+
+ddata_group <- ddata_new %>% 
+  group_by(college_cs, year) %>% 
+  summarise(N_active = sum(active), N_interrupted = sum(interrupted),
+            N_completed = sum(completed), N_terminated = sum(terminated),
+            N_other = sum(other))
+
+ddata_new_df <- data.frame(college_cs = rep(ddata_group$college_cs, 5),
+                            year = rep(ddata_group$year, 5),
+                            N = c(ddata_group$N_active, ddata_group$N_interrupted, 
+                                  ddata_group$N_completed, ddata_group$N_terminated,
+                                  ddata_group$N_other),
+                            N_name = rep(c("Aktívni", "Prerušení", "Končiaci (SZZ)", "Predčasne ukončení", "Ostatní"), 
+                                         each = nrow(ddata_group)))
+
+ggplot(data = ddata_new_df, aes(x = year, y = N, color = college_cs)) + 
+  geom_line(linewidth = 1) + geom_point(size = 2) +
+  facet_wrap(~N_name, scale = "free") +
+  labs(
+    title = "Vysoké školy v Brne",
+    x = "Rok",
+    y = "Absolutný počet študentov",
+    color = "Vysoká škola"
+  )
+
+ddata_sums <- rowSums(ddata_group[, 3:7])
+
+ddata_new_df_rel <- ddata_group[, 3:7] / cbind(ddata_sums, ddata_sums, ddata_sums, ddata_sums, ddata_sums)
+
+ddata_new_df_rel <- cbind(ddata_new_df[, 1:2], ddata_new_df_rel)
+
+ddata_rel_df <- data.frame(college_cs = rep(ddata_new_df_rel$college_cs, 5),
+                            year = rep(ddata_new_df_rel$year, 5),
+                            N = c(ddata_new_df_rel$N_active, ddata_new_df_rel$N_interrupted, 
+                                  ddata_new_df_rel$N_completed, ddata_new_df_rel$N_terminated,
+                                  ddata_new_df_rel$N_other),
+                            N_name = rep(c("Aktívni", "Prerušení", "Končiaci (SZZ)", "Predčasne ukončení", "Ostatní"), 
+                                         each = nrow(ddata_new_df_rel)))
+
+ggplot(data = ddata_rel_df, aes(x = year, y = N, color = college_cs)) + 
+  geom_line(linewidth = 1) + geom_point(size = 2) +
+  facet_wrap(~N_name, scale = "free") +
+  labs(
+    title = "Vysoké školy v Brne",
+    x = "Rok",
+    y = "Relatívny počet študentov",
+    color = "Vysoká škola"
+  )
+
+```
+Počty študentov na univerzitách v Brne
+:::
+
+
+::: {#fig-splines-03}
+```{r}
+#| label: code_04
+#| eval: true
+#| echo: true
+#| warning: false
+#| layout-ncol: 1
+#| fig-width: 10
+#| fig-height: 5
+#| fig-align: "center"
+#| bg_black: false
+pdf.options(encoding = "CP1250")
+
+active_by_college <- data %>% group_by(college, year) %>% summarise(active = sum(active))
+active_by_college <- active_by_college %>% filter(max(active) > 20000)
+
+ggplot(active_by_college, aes(x = year, y = active, color = college)) +
+  geom_line(size = 1) + geom_point(size = 2) +
+  labs(
+    title = "Najväčšie univerzity v ČR",
+    x = "Rok",
+    y = "Počet aktívnych študentov",
+    color = "Vysoká škola"
+  )
+```
+Najväčšie univerzity v ČR
+:::
+
+
+::: {#fig-splines-04}
+```{r}
+#| label: code_05
+#| eval: true
+#| echo: true
+#| warning: false
+#| layout-ncol: 2
+#| fig-align: "center"
+#| bg_black: false
+pdf.options(encoding = "CP1250")
+
+faculties <- data %>% filter(year > 2012) %>% group_by(faculty) %>% 
+  summarise(across(c(active, completed, interrupted, terminated, other), 
+                   ~ sum(.x, na.rm = TRUE))) %>%
+  filter(!str_detect(faculty, "celoškolská pracoviště")) %>% arrange(desc(active))
+
+# unique(faculties$faculty)
+
+faculty_economy <- 
+  faculties[faculties$faculty == "41110 Provozně ekonomická fakulta", 2:6] +
+  faculties[faculties$faculty == "27510 Ekonomická fakulta", 2:6] +
+  faculties[faculties$faculty == "31130 Fakulta podnikohospodářská", 2:6] +
+  faculties[faculties$faculty == "43110 Provozně ekonomická fakulta", 2:6] +
+  faculties[faculties$faculty == "14560 Ekonomicko-správní fakulta", 2:6] +
+  faculties[faculties$faculty == "26510 Fakulta podnikatelská", 2:6] +
+  faculties[faculties$faculty == "31110 Fakulta financí a účetnictví", 2:6] +
+  faculties[faculties$faculty == "19520 Obchodně podnikatelská fakulta v Karviné", 2:6] +
+  faculties[faculties$faculty == "28120 Fakulta managementu a ekonomiky", 2:6] +
+  faculties[faculties$faculty == "25410 Fakulta ekonomicko-správní", 2:6] +
+  faculties[faculties$faculty == "31150 Národohospodářská fakulta", 2:6] +
+  faculties[faculties$faculty == "23510 Fakulta ekonomická", 2:6] +
+  faculties[faculties$faculty == "13510 Fakulta sociálně ekonomická", 2:6] +
+  faculties[faculties$faculty == "12510 Ekonomická fakulta", 2:6] +
+  faculties[faculties$faculty == "24310 Ekonomická fakulta", 2:6] +
+  faculties[faculties$faculty == "31160 Fakulta managementu v Jindřichově Hradci", 2:6]
+
+faculty_social_and_law <-
+  faculties[faculties$faculty == "11230 Fakulta sociálních věd", 2:6] + 
+  faculties[faculties$faculty == "11220 Právnická fakulta", 2:6] +
+  faculties[faculties$faculty == "31120 Fakulta mezinárodních vztahů", 2:6] +
+  faculties[faculties$faculty == "14220 Právnická fakulta", 2:6] +
+  faculties[faculties$faculty == "14230 Fakulta sociálních studií", 2:6] +
+  faculties[faculties$faculty == "15220 Právnická fakulta", 2:6] +
+  faculties[faculties$faculty == "23320 Fakulta právnická", 2:6] +
+  faculties[faculties$faculty == "19510 Fakulta veřejných politik v Opavě", 2:6] +
+  faculties[faculties$faculty == "43310 Fakulta regionálního rozvoje a mezinárodních studií", 2:6] +
+  faculties[faculties$faculty == "17200 Fakulta sociálních studií", 2:6]
+
+faculty_humanities <-
+  faculties[faculties$faculty == "14210 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "11210 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "15210 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "11240 Fakulta humanitních studií", 2:6] +
+  faculties[faculties$faculty == "28150 Fakulta humanitních studií", 2:6] +
+  faculties[faculties$faculty == "17250 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "23330 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "25210 Fakulta filozofická", 2:6] +
+  faculties[faculties$faculty == "15260 Cyrilometodějská teologická fakulta", 2:6] +
+  faculties[faculties$faculty == "18460 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "13410 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "12260 Teologická fakulta", 2:6] +
+  faculties[faculties$faculty == "11280 Husitská teologická fakulta", 2:6] +
+  faculties[faculties$faculty == "12210 Filozofická fakulta", 2:6] +
+  faculties[faculties$faculty == "11260 Katolická teologická fakulta", 2:6] +
+  faculties[faculties$faculty == "11270 Evangelická teologická fakulta", 2:6]
+
+faculty_education <-
+  faculties[faculties$faculty == "11410 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "14410 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "15410 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "18440 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "13430 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "17450 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "12410 Pedagogická fakulta", 2:6] +
+  faculties[faculties$faculty == "23420 Fakulta pedagogická", 2:6]
+
+faculty_medicine_and_pharmacy <-
+  faculties[faculties$faculty == "11110 1. lékařská fakulta", 2:6] +
+  faculties[faculties$faculty == "14110 Lékařská fakulta", 2:6] +
+  faculties[faculties$faculty == "15110 Lékařská fakulta", 2:6] +
+  faculties[faculties$faculty == "11120 3. lékařská fakulta", 2:6] +
+  faculties[faculties$faculty == "11140 Lékařská fakulta v Plzni", 2:6] +
+  faculties[faculties$faculty == "11130 2. lékařská fakulta", 2:6] +
+  faculties[faculties$faculty == "11150 Lékařská fakulta v Hradci Králové", 2:6] +
+  faculties[faculties$faculty == "17110 Lékařská fakulta", 2:6] +
+  faculties[faculties$faculty == "11160 Farmaceutická fakulta v Hradci Králové", 2:6] +
+  faculties[faculties$faculty == "25520 Fakulta zdravotnických studií", 2:6] +
+  faculties[faculties$faculty == "23310 Fakulta zdravotnických studií", 2:6] +
+  faculties[faculties$faculty == "15120 Fakulta zdravotnických věd", 2:6] +
+  faculties[faculties$faculty == "13450 Fakulta zdravotnických studií", 2:6] +
+  faculties[faculties$faculty == "16370 Farmaceutická fakulta", 2:6] +
+  faculties[faculties$faculty == "12110 Zdravotně sociální fakulta", 2:6] +
+  faculties[faculties$faculty == "24530 Fakulta zdravotnických studií", 2:6] +
+  faculties[faculties$faculty == "14160 Farmaceutická falulta", 2:6]
+
+faculty_science <-
+  faculties[faculties$faculty == "11310 Přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "14310 Přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "15310 Přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "11320 Matematicko-fyzikální fakulta", 2:6] +
+  faculties[faculties$faculty == "21460 Fakulta biomedicínského inženýrství", 2:6] +
+  faculties[faculties$faculty == "17310 Přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "27360 Fakulta materiálově-technologická", 2:6] +
+  faculties[faculties$faculty == "25310 Fakulta chemicko-technologická", 2:6] +
+  faculties[faculties$faculty == "22310 Fakulta chemické technologie", 2:6] +
+  faculties[faculties$faculty == "26310 Fakulta chemická", 2:6] +
+  faculties[faculties$faculty == "23520 Fakulta aplikovaných věd", 2:6] +
+  faculties[faculties$faculty == "12310 Přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "13440 Přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "22340 Fakulta chemicko-inženýrská", 2:6] +
+  faculties[faculties$faculty == "18470 Přírodovědecká fakulta", 2:6]
+
+faculty_construction <-
+  faculties[faculties$faculty == "26110 Fakulta stavební", 2:6] + 
+  faculties[faculties$faculty == "21110 Fakulta stavební", 2:6] +
+  faculties[faculties$faculty == "27120 Fakulta stavební", 2:6] +
+  faculties[faculties$faculty == "21450 Fakulta architektury", 2:6] +
+  faculties[faculties$faculty == "26410 Fakulta architektury", 2:6]
+
+faculty_mechanical_engineering <-
+  faculties[faculties$faculty == "26210 Fakulta strojního inženýrství", 2:6] +
+  faculties[faculties$faculty == "27230 Fakulta strojní", 2:6] +
+  faculties[faculties$faculty == "21220 Fakulta strojní", 2:6] +
+  faculties[faculties$faculty == "23210 Fakulta strojní", 2:6] +
+  faculties[faculties$faculty == "24210 Fakulta strojní", 2:6] +
+  faculties[faculties$faculty == "13420 Fakulta strojního inženýrství", 2:6]
+
+faculty_information_and_technology <-
+  faculties[faculties$faculty == "27240 Fakulta elektrotechniky a informatiky", 2:6] +
+  faculties[faculties$faculty == "26220 Fakulta elektrotechniky a komunikačních technologií", 2:6] +
+  faculties[faculties$faculty == "21230 Fakulta elektrotechnická", 2:6] +
+  faculties[faculties$faculty == "31140 Fakulta informatiky a statistiky", 2:6] +
+  faculties[faculties$faculty == "26230 Fakulta informačních technologií", 2:6] +
+  faculties[faculties$faculty == "21240 Fakulta informačních technologií", 2:6] +
+  faculties[faculties$faculty == "14330 Fakulta informatiky", 2:6] +
+  faculties[faculties$faculty == "18450 Fakulta informatiky a managementu", 2:6] +
+  faculties[faculties$faculty == "28110 Fakulta technologická", 2:6] +
+  faculties[faculties$faculty == "41310 Technická fakulta", 2:6] +
+  faculties[faculties$faculty == "28140 Fakulta aplikované informatiky", 2:6] +
+  faculties[faculties$faculty == "21340 Fakulta jaderná a fyzikálně inženýrská", 2:6] +
+  faculties[faculties$faculty == "23220 Fakulta elektrotechnická", 2:6] +
+  faculties[faculties$faculty == "25530 Fakulta elektrotechniky a informatiky", 2:6] +
+  faculties[faculties$faculty == "24220 Fakulta mechatroniky, informatiky a mezioborových studií", 2:6]
+
+faculty_agriculture_and_enviroment <-
+  faculties[faculties$faculty == "41210 Fak. agrobiologie, potrav. a přír. zdr.", 2:6] +
+  faculties[faculties$faculty == "41330 Fakulta životního prostředí", 2:6] +
+  faculties[faculties$faculty == "43210 Agronomická fakulta", 2:6] +
+  faculties[faculties$faculty == "41320 Fakulta lesnická a dřevařská", 2:6] +
+  faculties[faculties$faculty == "43410 Lesnická a dřevařská fakulta", 2:6] +
+  faculties[faculties$faculty == "22330 Fakulta potravinářské a biochemické technologie", 2:6] +
+  faculties[faculties$faculty == "12220 Zemědělská fakulta", 2:6] +
+  faculties[faculties$faculty == "43510 Zahradnická fakulta (Lednice)", 2:6] +
+  faculties[faculties$faculty == "16170 Fakulta veterinárního lékařství", 2:6] +
+  faculties[faculties$faculty == "16270 Fakulta veterinární hygieny a ekologie", 2:6] +
+  faculties[faculties$faculty == "41340 Fakulta tropického zemědělství", 2:6] +
+  faculties[faculties$faculty == "51310 Filmová a televizní fakulta", 2:6] +
+  faculties[faculties$faculty == "13520 Fakulta životního prostředí", 2:6] +
+  faculties[faculties$faculty == "12520 Fakulta rybářství a ochrany vod", 2:6] +
+  faculties[faculties$faculty == "41410 Fakulta lesnická a enviromentální", 2:6]
+
+faculty_media_and_art <-
+  faculties[faculties$faculty == "51210 Divadelní fakulta", 2:6] +
+  faculties[faculties$faculty == "28130 Fakulta multimediálních komunikací", 2:6] +
+  faculties[faculties$faculty == "24410 Fakulta textilní", 2:6] +
+  faculties[faculties$faculty == "23410 Fakulta designu a umění L. Sutnara", 2:6] +
+  faculties[faculties$faculty == "51110 Hudební fakulta", 2:6] +
+  faculties[faculties$faculty == "17500 Fakulta umění", 2:6] +
+  faculties[faculties$faculty == "13530 Fakulta umění a designu", 2:6] +
+  faculties[faculties$faculty == "54510 Hudební fakulta", 2:6] +
+  faculties[faculties$faculty == "54530 Divadelní fakulta", 2:6] +
+  faculties[faculties$faculty == "26420 Fakulta výtvarných umění", 2:6] +
+  faculties[faculties$faculty == "24520 Fakulta umění a architektury", 2:6] +
+  faculties[faculties$faculty == "25110 Fakulta restaurování", 2:6]
+
+faculty_other <-
+  faculties[faculties$faculty == "27350 Hornicko-geologická fakulta", 2:6] +
+  faculties[faculties$faculty == "27200 Fakulta bezpečnostního inženýrství", 2:6] +
+  faculties[faculties$faculty == "24510 Fakulta přírodovědně-humanitní a pedagogická", 2:6] +
+  faculties[faculties$faculty == "11510 Fakulta tělesné výchovy a sportu", 2:6] +
+  faculties[faculties$faculty == "15510 Fakulta tělesné kultury", 2:6] +
+  faculties[faculties$faculty == "19240 Filozoficko-přírodovědecká fakulta", 2:6] +
+  faculties[faculties$faculty == "25510 Dopravní fakulta Jana Pernera", 2:6] +
+  faculties[faculties$faculty == "14510 Fakulta sportovních studií", 2:6] +
+  faculties[faculties$faculty == "21260 Fakulta dopravní", 2:6] +
+  faculties[faculties$faculty == "28160 Fakulta logistiky a krizového řízení", 2:6] +
+  faculties[faculties$faculty == "22320 Fakulta technologie ochrany prostředí", 2:6]
+
+faculties_summary <- 
+  rbind(faculty_economy, faculty_social_and_law, faculty_humanities, 
+        faculty_education, faculty_medicine_and_pharmacy, faculty_science, 
+        faculty_construction, faculty_mechanical_engineering, 
+        faculty_information_and_technology, faculty_agriculture_and_enviroment, 
+        faculty_media_and_art, faculty_other)
+
+faculties_summary <-
+  cbind(faculties_summary, faculty = c("economy", "social and law", "humanities",
+                                 "education", "medicine and pharmacy",
+                                 "science", "construction",
+                                 "mechanical engineering",
+                                 "information and technology",
+                                 "agriculture and enviroment",
+                                 "media and art", "other"))
+
+faculties_categorised <- faculties_summary[, c(1:4, 6)] %>% arrange(desc(completed))
+faculties_categorised_long <- faculties_categorised %>%
+  pivot_longer(cols = c(active, completed, interrupted, terminated), names_to = "variable", values_to = "value")
+
+ggplot(faculties_categorised_long, aes(x = faculty, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(
+    title = "",
+    x = "Fakulta",
+    y = "Absolutný počet študentov"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+faculties_relative <- cbind(faculties_summary, 
+                            total = faculties_summary$active +
+                                    faculties_summary$completed + 
+                                    faculties_summary$interrupted + 
+                                    faculties_summary$terminated + 
+                                    faculties_summary$other)
+
+faculties_relative$active      <- faculties_relative$active / faculties_relative$total
+faculties_relative$completed   <- faculties_relative$completed / faculties_relative$total
+faculties_relative$interrupted <- faculties_relative$interrupted / faculties_relative$total
+faculties_relative$terminated  <- faculties_relative$terminated / faculties_relative$total
+faculties_relative$other       <- faculties_relative$other / faculties_relative$total
+
+faculties_relative <- faculties_relative[, c(1:4, 6)]
+faculties_relative_long <- faculties_relative %>%
+  pivot_longer(cols = c(active, completed, interrupted, terminated), names_to = "variable", values_to = "value")
+
+ggplot(faculties_relative_long, aes(x = faculty, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(
+    title = "",
+    x = "Fakulta",
+    y = "Relatívny počet študentov"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+```
+Jednotlivé študíjne obory za posledných 10 rokov.
+:::
+
+::: {#tbl-uni-03}
+```{r}
+#| label: code_06
+#| eval: true
+#| echo: true
+#| warning: false
+
+terminated_by_college <- data %>% group_by(college, year) %>% mutate(term_ratio = terminated/(active+completed+terminated+interrupted+other))
+terminated_by_college <- terminated_by_college %>% mutate(term_ratio = ifelse(is.nan(term_ratio), 0, term_ratio))
+terminated_by_college <- terminated_by_college %>% select(college, year, term_ratio)
+
+terminated_by_college_top <- terminated_by_college %>% group_by(college) %>%
+  summarize(mean_term_ratio = mean(term_ratio)) %>% filter(mean_term_ratio > 0.186) %>% 
+  left_join(terminated_by_college, by = "college") %>% select(college, year, term_ratio)
+
+
+kable(unique(terminated_by_college_top$college), col.names = NULL)
+```
+Univerzity v ČR s najväčším priemerným pomerom predčasného ukončenia štúdia za rok
+:::
+
